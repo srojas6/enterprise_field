@@ -1,0 +1,14 @@
+Creative Commons Attribution 4.0 International Public License
+
+By exercising the Licensed Rights (defined below), You accept and agree to be bound by the terms and conditions of this Creative Commons Attribution 4.0 International Public License ("Public License").
+
+1. Grant of Rights. Subject to the terms and conditions of this Public License, the Licensor hereby grants You a worldwide, royalty-free, non-sublicensable, non-exclusive, irrevocable license to:
+  a. reproduce and Share the Licensed Material, in whole or in part; and
+  b. produce, reproduce, and Share Adapted Material.
+
+2. Attribution. If You Share the Licensed Material (including in modified form), You must:
+  a. retain the copyright notice, reference to this license, and a link to the license text;
+  b. indicate if changes were made; and
+  c. not suggest endorsement by the Licensor.
+
+Full legal text available at: https://creativecommons.org/licenses/by/4.0/legalcode
