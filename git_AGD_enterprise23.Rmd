@@ -1,0 +1,526 @@
+---
+title: "Analyse géométrique des données – Enquête Enterprise 2023"
+author: "Sergio Rojas"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: show
+    theme: readable
+---
+
+# Introduction
+
+Ce document présente une analyse géométrique des données (ACM + CAH) réalisée à partir des données de l'enquête Enterprise Survey 2023 (Banque mondiale) pour le Paraguay.  
+L’objectif est d’explorer les structures du champ des entreprises, à travers des dimensions telles que la forme juridique, la participation à des marchés publics, l’exportation, etc.
+
+
+
+```{r setup, include=FALSE}
+# Paramètres globaux pour l'affichage des blocs de code
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center",
+  fig.width = 8,
+  fig.height = 6
+)
+
+```
+
+```{r}
+# Chargement des bibliothèques nécessaires à l'analyse géométrique des données
+
+library(GDAtools)      # Outils spécialisés pour l'ACM
+library(FactoMineR)    # Méthodes d'analyse multivariée
+library(factoextra)    # Visualisation des résultats
+library(explor)        # Interface interactive pour l'ACM
+library(dplyr)         # Manipulation des données
+library(ggplot2)       # Visualisation personnalisée
+library(ggrepel)       # Étiquetage non superposé
+library(stats)         # Fonctions statistiques de base
+library(gtsummary)     # Résumés statistiques descriptifs
+library(writexl)       # Export de tableaux vers Excel
+library(ggforce)       # Ellipses et groupes dans ggplot2
+library(guideR)        # Outils graphiques pour explorer les résultats des classifications
+library(patchwork)     # Pour combiner les graphiques
+ 
+
+```
+
+# Construction du tableau de données pour l’ACM
+```{r}
+# Sélection des variables pertinentes pour l'Analyse des Correspondances Multiples (ACM)
+
+acm <- enterprise23[, c(
+  # Variables actives
+  "ventes_categ", "financement_source", "marche_principal", "nb_concurrents",
+  "litige_commercial", "concurrence_informelle", "inspection_fiscale", "temps_reglementation",
+  "nb_employes_categ", "emploi_hq", "emploi_sq", "emploi_pq", "formation",
+  "conflit_travail", "inspection_travail", "statut_legal", "annee_creation", "exp_gerant",
+  "certification_qualite", "presence_en_ligne", "innovation", "investissement_rd", "gestion_energie",
+
+  # Variables supplémentaires
+  "profit_categ", "evolution_concurrence", "pouvoir_prix", "elec_obs", "trans_obs", "aduan_obs",
+  "obstacle_concurrence_informelle", "obstacle_terre", "obstacle_financement", "obstacle_taxes",
+  "obstacle_admin_fiscale", "obstacle_licences", "obstacle_politique", "obstacle_corruption",
+  "obstacle_reglementation_travail", "obstacle_main_oeuvre", "indep_tribunaux",
+  "participation_marches_publics",
+
+  # Variables structurantes
+  "exportation", "contrat_etat",
+
+  # Propriétés générales
+  "secteur", "taille", "region", "femme", "dirigeant", "femme_dir",
+  "secteur_activite", "capital_etranger", "id"
+)]
+
+```
+
+```{r}
+## Vérification de la structure des données
+
+# Structure générale du tableau ACM
+str(acm)
+
+# Conversion de toutes les variables en facteurs
+acm <- data.frame(lapply(acm, factor))
+
+# Résumé statistique des premières variables actives
+summary(acm[, 1:23])
+
+# Identification des modalités rares ou problématiques à exclure de l’ACM
+getindexcat(acm[, 1:23])
+
+```
+
+# Analyse des correspondances multiples spécifique (ACM)
+
+```{r}
+# Exécution de l'ACM avec exclusion manuelle de modalités rares
+# Les indices d'exclusion sont obtenus à partir de la fonction getindexcat()
+mca <- speMCA(acm[, 1:23], excl = c(9, 11, 16, 20, 23, 26, 35, 40, 45, 50, 55, 58, 61, 67, 74, 77, 84), ncp = 50)
+```
+
+```{r}
+# Taux d'inertie brute et corrigée selon la règle de Benzécri
+modif.rate(mca)$raw           # Valeurs propres brutes
+modif.rate(mca)$modif         # Taux corrigés de Benzécri
+modif.rate(mca)$modif %>% round(1)
+
+```
+
+### Visualisation
+```{r}
+# Extraction des valeurs propres et des taux de variance
+eigen_data <- as.data.frame(modif.rate(mca)$raw)
+
+# Renommer les colonnes pour plus de clarté
+colnames(eigen_data) <- c("valeur_propre", "taux_variance", "variance_cumulative")
+
+# Numéroter les axes pour l'affichage
+eigen_data$axe <- seq_len(nrow(eigen_data))
+
+```
+
+```{r}
+# Graphique en barres des taux de variance
+ggplot(eigen_data, aes(x = factor(axe), y = taux_variance)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  theme_minimal() +
+  labs(title = "Taux de variance expliqué par axe (ACM)",
+       x = "Axes",
+       y = "Taux de variance (%)") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+
+```{r}
+# Graphique de la variance cumulée
+ggplot(eigen_data, aes(x = factor(axe), y = variance_cumulative)) +
+  geom_line(group = 1, color = "red") +
+  geom_point(color = "red") +
+  theme_minimal() +
+  labs(title = "Variance cumulée expliquée par les axes",
+       x = "Axes",
+       y = "Variance cumulée (%)") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+
+### Nuages des individus
+```{r}
+# Axes 1 et 2
+ggcloud_indiv(mca, type = "i", axes = c(1,2)) +
+  coord_fixed()
+
+
+```
+
+```{r}
+# Axes 1 et 3, coloré par secteur
+ggcloud_indiv(mca, axes = c(1,3), col = acm$secteur) +
+  scale_color_manual(values = c("Industrie manufacturière" = "blue", 
+                                "Commerce de détail" = "red", 
+                                "Autres services" = "darkgreen")) +
+  labs(color = "Secteur d'activité") +
+  theme(legend.position = "bottom") +
+  coord_fixed()
+
+
+```
+
+```{r}
+# Observation ciblée (ligne 168)
+acm[168, ]
+
+```
+
+```{r}
+# Nuage des individus : axes 1 et 3 (sans couleur)
+nuage_indiv_1_3 <- ggcloud_indiv(mca, type = "i", axes = c(1,3)) +
+  coord_fixed()
+nuage_indiv_1_3
+```
+
+```{r}
+# Nuage des individus : axes 3 et 4 (sans couleur)
+ggcloud_indiv(mca, type = "i", axes = c(3,4)) +
+  coord_fixed()
+
+```
+
+```{r}
+# Nuage des individus : axes 3 et 4 avec couleur par secteur
+ggcloud_indiv(mca, type = "i", axes = c(3,4), col = acm$secteur) +
+  scale_color_manual(values = c("Industrie manufacturière" = "blue", 
+                                "Commerce de détail" = "red", 
+                                "Autres services" = "darkgreen")) +
+  labs(color = "Secteur d'activité") +
+  theme(legend.position = "bottom") +
+  coord_fixed()
+
+```
+
+```{r}
+# Observation ciblée (ligne 261)
+acm[261, ]
+
+```
+
+### Nuages des variables
+```{r}
+# Axe 1 (variables + modalités les plus contributrices)
+ACMgrafico_ax1 <- ggcloud_variables(
+  mca, 
+  axes = c(1,3), 
+  points = "besth", 
+  shapes = TRUE, 
+  vlab = FALSE, 
+  prop = NULL, 
+  textsize = 5, 
+  legend = "none"
+) +
+  coord_fixed()
+
+ACMgrafico_ax1
+
+```
+
+```{r}
+# Axe 2
+ACMgrafico_ax2 <- ggcloud_variables(
+  mca, 
+  points = "bestv", 
+  shapes = TRUE, 
+  vlab = FALSE, 
+  prop = NULL, 
+  textsize = 5, 
+  legend = "none"
+) +
+  coord_fixed()
+
+ACMgrafico_ax2
+
+```
+
+```{r}
+# Axe 3 (avec axe 1)
+ACMgrafico_ax3 <- ggcloud_variables(
+  mca, 
+  axes = c(1,3), 
+  points = "bestv", 
+  shapes = TRUE, 
+  vlab = FALSE, 
+  prop = NULL, 
+  textsize = 5, 
+  legend = "none"
+) +
+  coord_fixed()
+
+ACMgrafico_ax3
+
+```
+### Ellipses de concentration
+```{r}
+ellipse_etat <- ggadd_kellipses(nuage_indiv_1_3, mca, acm$contrat_etat, axes = c(1,3), label = FALSE, legend = "bottom") +
+  coord_fixed()
+ellipse_etat
+
+ellipse_export <- ggadd_kellipses(nuage_indiv_1_3, mca, acm$exportation, axes = c(1,3), label = FALSE, legend = "bottom") +
+  coord_fixed()
+ellipse_export
+
+ellipse_profit <- ggadd_kellipses(nuage_indiv_1_3, mca, acm$profit_categ, sel = c(2,3,4,5), axes = c(1,3), label = FALSE, legend = "bottom") +
+  coord_fixed()
+ellipse_profit
+
+```
+### Zoom sur des individus
+```{r}
+# Entreprises exportatrices
+df_ind <- data.frame(mca$ind$coord)
+df_ind$exportation <- acm$exportation
+df_ind$id <- acm$id
+
+ggplot(df_ind, aes(x = dim.1, y = dim.3)) +
+  geom_point(aes(color = exportation)) +
+  scale_color_manual(values = c("Exportatrice" = "orange", "Non exportatrice" = "grey70")) +
+  theme_minimal() +
+  labs(title = "Plan 1-3 : Statut d’exportation",
+       x = "Dimension 1", y = "Dimension 3",
+       color = "Exportation") +
+  theme(legend.position = "bottom") +
+  geom_text(data = subset(df_ind, exportation == "Exportatrice"),
+            aes(label = id),
+            size = 3, color = "black") +
+  coord_fixed(ratio = 1, expand = TRUE)
+
+```
+```{r}
+# Marché principal : International
+df_ind$marche_principal <- acm$marche_principal
+
+ggplot(df_ind, aes(x = dim.1, y = dim.3)) +
+  geom_point(aes(color = marche_principal)) +
+  scale_color_manual(values = c("International" = "orange", "National" = "grey70", "Local" = "grey70")) +
+  theme_minimal() +
+  labs(title = "Plan 1-3 : Marché principal",
+       x = "Dimension 1", y = "Dimension 3",
+       color = "Marché") +
+  theme(legend.position = "bottom") +
+  geom_text(data = subset(df_ind, marche_principal == "International"),
+            aes(label = id),
+            size = 3, color = "black") +
+  coord_fixed()
+
+```
+```{r}
+# Contrat avec l'État
+df_ind$contrat_etat <- acm$contrat_etat
+
+ggplot(df_ind, aes(x = dim.1, y = dim.3)) +
+  geom_point(aes(color = contrat_etat)) +
+  scale_color_manual(values = c("Contrat avec l'État" = "red", "Aucun contrat avec l'État" = "grey70")) +
+  theme_minimal() +
+  labs(title = "Plan 1-3 : Contrat avec l'État",
+       x = "Dimension 1", y = "Dimension 3",
+       color = "Contrat") +
+  theme(legend.position = "bottom") +
+  geom_text(data = subset(df_ind, contrat_etat == "Contrat avec l'État"),
+            aes(label = id),
+            size = 3, color = "black") +
+  coord_fixed()
+
+```
+```{r}
+# Profits élevés
+df_ind$profit_categ <- acm$profit_categ
+
+ggplot(df_ind, aes(x = dim.1, y = dim.3)) +
+  geom_point(aes(color = profit_categ)) +
+  scale_color_manual(values = c("Profits élevés" = "blue", 
+                                "Profits modérés" = "grey70", 
+                                "Profits faibles" = "grey70", 
+                                "Pertes" = "grey70", 
+                                "NA_profit_categ" = "grey70")) +
+  theme_minimal() +
+  labs(title = "Plan 1-3 : Profits élevés",
+       x = "Dimension 1", y = "Dimension 3",
+       color = "Profits") +
+  theme(legend.position = "bottom") +
+  geom_text(data = subset(df_ind, profit_categ == "Profits élevés"),
+            aes(label = id),
+            size = 3, color = "black") +
+  coord_fixed()
+
+```
+```{r}
+enterprise23[enterprise23$id == 29564, ]
+acm[acm$id == 29564, ]
+
+enterprise23[enterprise23$id == 25209, ]
+acm[acm$id == 25209, ]
+
+```
+## Écarts calibrés
+```{r}
+# Définition de la fonction pour les distances calibrées entre modalités
+scaled.dev <- function(resmca, var) {
+  sv <- supvar(resmca, var)
+  res <- lapply(1:ncol(sv$coord), function(x) round(abs(outer(sv$coord[,x], sv$coord[,x], "-")), 3))
+  res <- lapply(res, function(x) {
+    rownames(x) <- colnames(x) <- rownames(sv$coord)
+    return(x)
+  })
+  names(res) <- colnames(sv$coord)
+  return(res)
+}
+
+```
+
+```{r}
+# Application aux facteurs structurants
+scaled.dev(mca, acm$contrat_etat)
+scaled.dev(mca, acm$exportation)
+scaled.dev(mca, acm$profit_categ)
+scaled.dev(mca, acm$capital_etranger)
+scaled.dev(mca, acm$region)
+
+```
+
+# Classification Ascendante Hiérarchique
+```{r}
+# Étape 1 : Calcul de la distance euclidienne sur les trois premiers axes de l’ACM
+d_final <- dist(mca$ind$coord[, 1:3])  # Dimensions 1 à 3
+
+# Étape 2 : Application de la méthode de Ward (critère d'inertie minimale)
+hca_final <- hclust(d_final, method = "ward.D2")
+
+# Étape 3 : Découpage de l’arbre en 3 groupes
+clusters_final <- factor(cutree(hca_final, k = 3))
+
+# Étape 4 : Intégration des clusters dans la base ACM
+acm$clusters <- clusters_final
+
+```
+
+### Visualisation des clusters sur le plan 1-3
+```{r}
+# Construction du data frame
+df_ind <- data.frame(mca$ind$coord)
+df_ind$clusters <- clusters_final
+
+# Graphique : positionnement des clusters avec ellipses de concentration
+ggplot(df_ind, aes(x = dim.1, y = dim.3)) +
+  geom_point(aes(color = factor(clusters)), size = 2) +
+  geom_mark_ellipse(aes(group = factor(clusters), fill = factor(clusters)),
+                    alpha = 0.2, color = NA) +
+  theme_minimal() +
+  labs(title = "Plan 1-3 : Positionnement des clusters d'entreprises",
+       x = "Dimension 1", y = "Dimension 3",
+       color = "Cluster", fill = "Cluster") +
+  theme(legend.position = "bottom") +
+  scale_x_continuous(expand = expansion(mult = 0.1)) +
+  scale_y_continuous(expand = expansion(mult = 0.1)) +
+  coord_fixed()
+```
+
+```{r}
+# Tracé des convex hulls sur le plan 1-3
+ggadd_chulls(nuage_indiv_1_3, mca, clusters_final, legend = "none")
+
+```
+
+### Évaluation CAH
+```{r}
+# 1. Visualiser le dendrogramme
+plot(hca_final, labels = FALSE, main = "Dendrogramme - Classification Ascendante Hiérarchique")
+rect.hclust(hca_final, k = 3, border = "red")  # Encadrer les 3 groupes retenus
+```
+
+```{r}
+# Visualisation de l’inertie expliquée en fonction du nombre de clusters
+hca_final |> 
+  guideR::plot_inertia_from_tree()
+
+```
+
+```{r}
+# Interprétation des clusters par variables actives
+desc <- catdes(data.frame(clusters_final, acm[,c(-24:-53)]), num.var = 1)
+desc  # Affiche la description des clusters
+
+```
+
+### Distribution des clusters
+```{r}
+# Calcul des pourcentages par cluster pour chaque variable d’intérêt
+
+# Exportation
+plot_data_export <- acm %>%
+  group_by(clusters, exportation) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(clusters) %>%
+  mutate(pct = 100 * n / sum(n))
+
+# Contrat avec l'État
+plot_data_contrat <- acm %>%
+  group_by(clusters, contrat_etat) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(clusters) %>%
+  mutate(pct = 100 * n / sum(n))
+
+# Catégorie de profit (en excluant les NA catégorisés)
+plot_data_profit <- acm %>%
+  filter(profit_categ != "NA_profit_categ") %>%
+  group_by(clusters, profit_categ) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(clusters) %>%
+  mutate(pct = 100 * n / sum(n))
+
+```
+
+```{r}
+# Graphique 1 : Exportation par cluster
+g1 <- ggplot(plot_data_export, aes(x = factor(clusters), y = pct, fill = exportation)) +
+  geom_bar(stat = "identity", position = "stack") +
+  geom_text(aes(label = paste0(round(pct, 1), "%")),
+            position = position_stack(vjust = 0.5), size = 3) +
+  labs(title = "Exportation selon les clusters",
+       x = "Cluster", y = "Pourcentage", fill = "Exportation") +
+  scale_fill_brewer(palette = "Dark2") +
+  theme_minimal()
+
+# Graphique 2 : Contrats avec l'État par cluster
+g2 <- ggplot(plot_data_contrat, aes(x = factor(clusters), y = pct, fill = contrat_etat)) +
+  geom_bar(stat = "identity", position = "stack") +
+  geom_text(aes(label = paste0(round(pct, 1), "%")),
+            position = position_stack(vjust = 0.5), size = 3) +
+  labs(title = "Contrats avec l'État selon les clusters",
+       x = "Cluster", y = "Pourcentage", fill = "Contrat avec l'État") +
+  scale_fill_brewer(palette = "Dark2") +
+  theme_minimal()
+
+# Graphique 3 : Profits par cluster
+g3 <- ggplot(plot_data_profit, aes(x = factor(clusters), y = pct, fill = profit_categ)) +
+  geom_bar(stat = "identity", position = "stack") +
+  geom_text(aes(label = paste0(round(pct, 1), "%")),
+            position = position_stack(vjust = 0.5), size = 3) +
+  labs(title = "Profits selon les clusters",
+       x = "Cluster", y = "Pourcentage", fill = "Catégorie de profit") +
+  scale_fill_brewer(palette = "Dark2") +
+  theme_minimal()
+
+```
+
+```{r}
+
+# Affichage vertical des trois graphiques
+g1 + g2 + g3 + plot_layout(ncol = 1)
+
+```
+
