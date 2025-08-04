@@ -1,6 +1,6 @@
 # Enterprise Survey 2023 - Paraguay: Geometric Data Analysis
 
-This repository contains the scripts developed for the geometric data analysis (GDA) conducted as part of a master's thesis (*mémoire*) in Quantitative Sociology and Demography (M2 SQD, Université Paris-Saclay – Institut Polytechnique de Paris). The project focuses on the Paraguayan economic space and its internal structures of power and domination, using data from the 2023 **Enterprise Survey** by the **World Bank**.
+This repository contains the scripts developed for the geometric data analysis (GDA) conducted as part of a master's thesis (*mémoire*) in Quantitative Sociology and Demography (M2 SQD, Université Paris-Saclay – Institut Polytechnique de Paris). The project focuses on the Paraguayan economic space and its internal structures of power and domination, using data from the 2023 **Enterprise Survey** by the **World Bank (WBES)**.
 
 The analysis follows a two-step exploratory procedure:
 - **Recoding of relevant variables** to align with sociological concepts (capital, competition, domination, symbolic power, etc.)
