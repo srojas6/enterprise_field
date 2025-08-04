@@ -1,0 +1,843 @@
+---
+title: "Recodification des variables - Enterprise Survey Paraguay 2023"
+author: "Sergio Rojas"
+date: "2024-10-22"
+output: html_document
+---
+
+# Description
+
+Ce script RMarkdown contient les étapes de recodification des variables issues de l'enquête Enterprise Survey Paraguay 2023 (Banque mondiale), en vue d'une analyse géométrique des données (ACM et CAH). Le fichier s’inscrit dans une logique de transparence scientifique et de reproductibilité. Les recodifications ont été effectuées selon des critères sociologiquement pertinents, en cohérence avec le cadre théorique de la recherche.
+
+Les étapes incluent :
+- Importation et préparation de la base de données
+- Sélection des variables pertinentes
+- Recodification de variables explicatives, structurantes, et contextuelles
+- Vérifications exploratoires
+
+
+
+```{r setup, include=FALSE}
+# Paramètres globaux pour l'affichage des blocs de code
+knitr::opts_chunk$set(echo = TRUE)
+
+# Chargement des bibliothèques nécessaires
+library(haven)        # Importation des fichiers .dta (Stata)
+library(questionr)    # Statistiques descriptives simples
+library(descriptio)   # Outils pour l'analyse géométrique des données
+library(dplyr)        # Manipulation de données
+library(tidyr)        # Restructuration des données
+library(ggplot2)      # Visualisation (optionnelle)
+library(knitr)        # Génération de tableaux (ex. : kable)
+
+# Données disponibles publiquement auprès de la Banque mondiale :
+# https://login.enterprisesurveys.org/content/sites/financeandprivatesector/en/library/library-detail.html/content/dam/wbgassetshare/enterprisesurveys/economy/paraguay/Paraguay-2023-full-data.dta
+# Remarque : un enregistrement gratuit est requis pour télécharger les données.
+
+# Importation de la base de données (à adapter selon l’emplacement local du fichier)
+
+#data <- read_dta("chemin/vers/Paraguay-2023-full-data.dta")
+
+# Création d'une copie de travail (par sécurité)
+enterprise23 <- data
+
+```
+
+# 1. Caractéristiques structurelles de l’entreprise
+
+## 1.1 Secteur d’activité (a4a)
+```{r}
+# Variable d'origine : a4a
+freq(enterprise23$a4a)
+
+# Recodification : trois grands secteurs
+enterprise23$secteur <- recode(enterprise23$a4a,
+    `1` = "Industrie manufacturière",
+    `2` = "Commerce de détail",
+    `3` = "Autres services")
+
+# Vérification
+freq(enterprise23$secteur)
+```
+
+## 1.2 Taille de l’entreprise (a6a)
+```{r}
+# Variable d'origine : a6a
+freq(enterprise23$a6a)
+
+# Recodification : classification standard selon effectif
+enterprise23$taille <- recode(enterprise23$a6a,
+    `1` = "Petite entreprise",
+    `2` = "Moyenne entreprise",
+    `3` = "Grande entreprise")
+
+# Vérification
+freq(enterprise23$taille)
+```
+
+## 1.3 Région d’implantation (a2)
+```{r}
+# Variable d'origine : a2
+freq(enterprise23$a2)
+
+# Recodification : trois zones géographiques
+enterprise23$region <- recode(enterprise23$a2,
+    `1` = "Asunción",
+    `2` = "Région Centrale",
+    `3` = "Autres régions")
+
+# Vérification
+freq(enterprise23$region)
+```
+
+## 1.4 Présence féminine parmi les propriétaires (b4)
+```{r}
+# Variable d'origine : b4
+freq(enterprise23$b4)
+
+# Recodification binaire
+enterprise23$femme <- recode(enterprise23$b4,
+    `1` = "Présence féminine",
+    `2` = "Absence féminine")
+
+# Vérification
+freq(enterprise23$femme)
+```
+
+## 1.5 Le propriétaire principal est-il le dirigeant ? (b3a)
+```{r}
+# Variable d'origine : b3a
+freq(enterprise23$b3a)
+
+# Recodification : rôle du propriétaire principal
+enterprise23$dirigeant <- recode(enterprise23$b3a,
+    `1` = "Propriétaire principal dirigeant",
+    `2` = "Propriétaire principal non dirigeant")
+
+# Vérification
+freq(enterprise23$dirigeant)
+```
+
+## 1.6 Genre du top manager (b7a)
+```{r}
+# Variable d'origine : b7a
+freq(enterprise23$b7a)
+
+# Recodification : genre du top manager
+enterprise23$femme_dir <- recode(enterprise23$b7a,
+    `1` = "Top manager femme",
+    `2` = "Top manager homme")
+
+# Vérification
+freq(enterprise23$femme_dir)
+```
+
+# 2. Capital économique
+
+## 2.1 Ventes annuelles (transformation logarithmique et catégorisation)
+```{r}
+# Transformation logarithmique des ventes annuelles (variable d2)
+constante <- abs(min(enterprise23$d2, na.rm = TRUE)) + 1
+
+enterprise23 <- enterprise23 %>%
+  mutate(ventes_log = log(d2 + constante))
+
+# Vérification de la distribution
+summary(enterprise23$ventes_log)
+```
+
+```{r}
+# Recodification des ventes log-transformées en catégories ordinales
+q1 <- quantile(enterprise23$ventes_log, probs = 0.25, na.rm = TRUE)
+q3 <- quantile(enterprise23$ventes_log, probs = 0.75, na.rm = TRUE)
+seuil_superieur <- quantile(enterprise23$ventes_log, probs = 0.95, na.rm = TRUE)
+
+enterprise23 <- enterprise23 %>%
+  mutate(ventes_categ = case_when(
+    is.na(d2) ~ "NA_ventes",
+    ventes_log < q1 ~ "Faibles ventes",
+    ventes_log >= q1 & ventes_log < q3 ~ "Ventes modérées",
+    ventes_log >= q3 & ventes_log < seuil_superieur ~ "Ventes élevées",
+    ventes_log >= seuil_superieur ~ "Très fortes ventes",
+    TRUE ~ NA_character_
+  ))
+
+# Vérification des catégories
+table(enterprise23$ventes_categ, useNA = "always")
+freq(enterprise23$ventes_categ)
+```
+
+## 2.2 Profits (proxy à partir des coûts déclarés)
+```{r}
+# Liste des variables utilisées pour estimer le profit
+variables_profit_proxy <- c("d2", "n2a", "n2e", "n2i", "n2b", 
+                            "n2k", "n2l", "n5a", "n5b", "n11")
+
+# Nettoyage des valeurs manquantes : -9 devient NA
+enterprise23 <- enterprise23 %>%
+  mutate(across(all_of(variables_profit_proxy), ~ ifelse(. == -9, NA, .)))
+
+# Supposition : NA dans les coûts = 0
+enterprise23 <- enterprise23 %>%
+  mutate(across(c(n2a, n2e, n2i, n2b, n2k, n2l, n5a, n5b), ~ ifelse(is.na(.), 0, .)))
+
+# Calcul des coûts et du bénéfice brut
+enterprise23 <- enterprise23 %>%
+  mutate(cout_total = n2a + n2e + n2i + n2b + n2k + n2l + n5a + n5b,
+         benefice_brut = d2 - cout_total)
+
+# Calcul du bénéfice net après impôts (proxy du profit)
+enterprise23 <- enterprise23 %>%
+  mutate(profit = ifelse(is.na(n11), benefice_brut, benefice_brut * (1 - (n11 / 100))))
+
+# Aperçu des résultats
+print(head(enterprise23 %>% select(d2, cout_total, benefice_brut, n11, profit)))
+summary(enterprise23$profit)
+```
+
+## 2.3 Profits – transformation logarithmique avec préservation du signe
+```{r}
+# Transformation logarithmique signée (permet d'intégrer les pertes)
+constante <- abs(min(enterprise23$profit, na.rm = TRUE)) + 1
+
+enterprise23 <- enterprise23 %>%
+  mutate(profit_log = sign(profit) * log(abs(profit) + constante))
+
+# Vérification de la distribution
+summary(enterprise23$profit_log)
+freq(enterprise23$profit_log)
+```
+
+## 2.4 Profits – recodification catégorielle
+```{r}
+# Catégorisation du profit log-transformé
+enterprise23 <- enterprise23 %>%
+  mutate(profit_categ = case_when(
+    profit_log < 0 ~ "Pertes",
+    profit_log >= 0 & profit_log < 27.90 ~ "Profits faibles",
+    profit_log >= 27.90 & profit_log < 28.09 ~ "Profits modérés",
+    profit_log >= 28.09 ~ "Profits élevés",
+    TRUE ~ NA_character_
+  )) %>%
+  mutate(profit_categ = ifelse(is.na(profit_categ), "NA_profit_categ", profit_categ))
+
+# Vérification de la distribution
+table(enterprise23$profit_categ, useNA = "always")
+freq(enterprise23$profit_categ)
+```
+
+## 2.5 Source principale de financement
+
+### Construction d’un indicateur synthétique basé sur la part déclarée de chaque source
+```{r}
+# Recodification des types de financement selon la source représentant la part la plus élevée (≥50%)
+
+enterprise23 <- enterprise23 %>%
+  mutate(financement_source = case_when(
+    
+    # Cas 1 : Une seule source ≥ 50% et représentant le maximum
+    k3a >= 50 & k3a == pmax(k3a, k3bc, k3e, k3f, k3hd, na.rm = TRUE) ~ "Financement interne",
+    k3bc >= 50 & k3bc == pmax(k3a, k3bc, k3e, k3f, k3hd, na.rm = TRUE) ~ "Financement bancaire",
+    
+    k3e >= 50 & k3e == pmax(k3a, k3bc, k3e, k3f, k3hd, na.rm = TRUE) ~ "Autres sources de financement",
+    k3f >= 50 & k3f == pmax(k3a, k3bc, k3e, k3f, k3hd, na.rm = TRUE) ~ "Autres sources de financement",
+    k3hd >= 50 & k3hd == pmax(k3a, k3bc, k3e, k3f, k3hd, na.rm = TRUE) ~ "Autres sources de financement",
+
+    # Cas 2 : Deux ou plusieurs sources à égalité maximale < 50%
+    k3a == k3bc & k3a < 50 |
+    k3a == k3e & k3a < 50 |
+    k3a == k3f & k3a < 50 |
+    k3a == k3hd & k3a < 50 |
+    k3bc == k3e & k3bc < 50 |
+    k3bc == k3f & k3bc < 50 |
+    k3bc == k3hd & k3bc < 50 |
+    k3e == k3f & k3e < 50 |
+    k3e == k3hd & k3e < 50 |
+    k3f == k3hd & k3f < 50 ~ "Financement diversifié",
+
+    # Cas 3 : Autres cas (valeurs faibles, manquantes ou sans dominante claire)
+    TRUE ~ "Autres sources de financement"
+  ))
+
+# Vérification de la variable créée
+freq(enterprise23$financement_source)
+```
+
+# 4. Régulation et concurrence
+
+## 4.1 Marché principal (e1)
+```{r}
+# Création d'une variable catégorielle décrivant le niveau géographique du marché principal
+enterprise23 <- enterprise23 %>%
+  mutate(marche_principal = case_when(
+    e1 == -9 ~ "NA_marche_principal",        # Donnée manquante
+    e1 == 1  ~ "Local",                      # Vente locale
+    e1 == 2  ~ "National",                   # Vente nationale
+    e1 == 3  ~ "International",              # Vente à l'étranger
+    TRUE     ~ NA_character_                # Sécurité
+  ))
+
+# Vérification
+table(enterprise23$marche_principal, useNA = "always")
+freq(enterprise23$marche_principal)
+```
+
+## 4.2 Nombre de concurrents (e2b)
+```{r}
+# Recodification selon l’intensité de la concurrence perçue
+enterprise23 <- enterprise23 %>%
+  mutate(nb_concurrents = case_when(
+    e2b == -4 ~ "Trop de concurrents pour être comptés",
+    e2b == -9 | is.na(e2b) ~ "NA_nb_concurrents",
+    e2b >= 0 & e2b <= 5 ~ "Faible concurrence",
+    e2b >= 6 & e2b <= 15 ~ "Concurrence modérée",
+    e2b >= 16 ~ "Forte concurrence",
+    TRUE ~ NA_character_
+  ))
+
+# Vérification
+table(enterprise23$nb_concurrents, useNA = "always")
+freq(enterprise23$nb_concurrents)
+```
+
+## 4.3 Litiges commerciaux passés (o1)
+```{r}
+# Recodification binaire : entreprise a-t-elle déjà eu un litige ?
+enterprise23 <- enterprise23 %>%
+  mutate(litige_commercial = case_when(
+    o1 == -9 ~ "NA_litige_commercial",
+    o1 == 1  ~ "Litige commercial passé",
+    o1 == 2  ~ "Aucun litige commercial",
+    TRUE ~ NA_character_
+  ))
+
+# Vérification
+table(enterprise23$litige_commercial, useNA = "always")
+freq(enterprise23$litige_commercial)
+```
+
+## 4.4 Concurrence avec le secteur informel (e11)
+```{r}
+# Recodification de la concurrence informelle perçue
+enterprise23 <- enterprise23 %>%
+  mutate(concurrence_informelle = case_when(
+    e11 == -9 ~ "NA_concurrence_informelle",
+    e11 == 1  ~ "Concurrence avec le secteur informel",
+    e11 == 2  ~ "Aucune concurrence avec le secteur informel",
+    TRUE ~ NA_character_
+  ))
+
+# Vérification
+table(enterprise23$concurrence_informelle, useNA = "always")
+freq(enterprise23$concurrence_informelle)
+```
+
+## 4.5 Inspection fiscale (j3)
+```{r}
+# Recodification binaire : présence ou non d'une inspection fiscale
+enterprise23 <- enterprise23 %>%
+  mutate(inspection_fiscale = case_when(
+    j3 == -9 ~ "NA_inspection_fiscale",
+    j3 == 1  ~ "Établissement inspecté",
+    j3 == 2  ~ "Aucune inspection fiscale",
+    TRUE ~ NA_character_
+  ))
+
+# Vérification
+table(enterprise23$inspection_fiscale, useNA = "always")
+freq(enterprise23$inspection_fiscale)
+```
+
+## 4.6 Temps consacré aux régulations gouvernementales (j2)
+```{r}
+# Recodification de l’intensité du temps dédié à la régulation
+enterprise23 <- enterprise23 %>%
+  mutate(temps_reglementation = case_when(
+    j2 == -9 ~ "Temps consacré inconnu",
+    j2 == 0 ~ "Aucun temps sur la réglementation",
+    j2 >= 1 & j2 <= 5 ~ "Peu de temps sur la réglementation",
+    j2 >= 6 & j2 <= 20 ~ "Temps modéré sur la réglementation",
+    j2 > 20 ~ "Beaucoup de temps sur la réglementation",
+    TRUE ~ NA_character_
+  ))
+
+# Vérification
+table(enterprise23$temps_reglementation, useNA = "always")
+freq(enterprise23$temps_reglementation)
+```
+
+# 5. Dynamiques de l’emploi
+
+## 5.1 Taille de l’effectif total (l1)
+```{r}
+enterprise23 <- enterprise23 %>%
+  mutate(nb_employes_categ = case_when(
+    l1 == -9 ~ "NA_nb_employés",
+    l1 < 10 ~ "Micro",
+    l1 >= 10 & l1 < 30 ~ "Petite",
+    l1 >= 30 & l1 < 80 ~ "Moyenne",
+    l1 >= 80 & l1 < 300 ~ "Grande",
+    l1 >= 300 ~ "Très grande",
+    TRUE ~ NA_character_
+  ))
+
+table(enterprise23$nb_employes_categ, useNA = "always")
+freq(enterprise23$nb_employes_categ)
+```
+
+## 5.2 Employés hautement qualifiés (l4a1)
+```{r}
+enterprise23 <- enterprise23 %>%
+  mutate(emploi_hq = case_when(
+    l4a1 == -9 ~ "NA_emploi_hautement_qualifie",
+    l4a1 == 0 ~ "Aucun qualifié (MS)",
+    l4a1 >= 1 & l4a1 < 10 ~ "Peu qualifié (MS)",
+    l4a1 >= 10 & l4a1 < 50 ~ "Moyennement qualifié (MS)",
+    l4a1 >= 50 ~ "Très qualifié (MS)",
+    TRUE ~ NA_character_
+  ))
+
+table(enterprise23$emploi_hq, useNA = "always")
+freq(enterprise23$emploi_hq)
+
+```
+
+## 5.3 Employés semi-qualifiés (l4a2)
+```{r}
+enterprise23 <- enterprise23 %>%
+  mutate(emploi_sq = case_when(
+    l4a2 == -9 ~ "NA_emploi_sq",
+    l4a2 == 0 ~ "Aucun semi-qualifié (MS)",
+    l4a2 >= 1 & l4a2 < 10 ~ "Peu semi-qualifié (MS)",
+    l4a2 >= 10 & l4a2 < 50 ~ "Moyennement semi-qualifié (MS)",
+    l4a2 >= 50 ~ "Très semi-qualifié (MS)",
+    TRUE ~ NA_character_
+  ))
+
+table(enterprise23$emploi_sq, useNA = "always")
+freq(enterprise23$emploi_sq)
+
+```
+
+## 5.4 Employés peu qualifiés (l4b)
+```{r}
+enterprise23 <- enterprise23 %>%
+  mutate(emploi_pq = case_when(
+    l4b == -9 ~ "NA_emploi_pq",
+    l4b == 0 ~ "Aucun peu qualifié (MS)",
+    l4b >= 1 & l4b < 10 ~ "Peu peu qualifié (MS)",
+    l4b >= 10 & l4b < 50 ~ "Moyennement peu qualifié (MS)",
+    l4b >= 50 ~ "Très peu qualifié (MS)",
+    TRUE ~ NA_character_
+  ))
+
+table(enterprise23$emploi_pq, useNA = "always")
+freq(enterprise23$emploi_pq)
+
+```
+
+## 5.5 Formation en entreprise (l10)
+```{r}
+enterprise23 <- enterprise23 %>%
+  mutate(formation = case_when(
+    l10 == -9 ~ "NA_formation",
+    l10 == 1 ~ "Formation en place",
+    l10 == 2 ~ "Aucune formation",
+    TRUE ~ NA_character_
+  ))
+
+table(enterprise23$formation, useNA = "always")
+freq(enterprise23$formation)
+
+```
+
+## 5.6 Conflits de travail (l37)
+```{r}
+enterprise23 <- enterprise23 %>%
+  mutate(conflit_travail = case_when(
+    l37 == -9 ~ "NA_conflit_travail",
+    l37 == 1 ~ "Conflit du travail",
+    l37 == 2 ~ "Aucun conflit",
+    TRUE ~ NA_character_
+  ))
+
+table(enterprise23$conflit_travail, useNA = "always")
+freq(enterprise23$conflit_travail)
+
+```
+
+## 5.7 Inspection du travail (santé/sécurité) (l40)
+```{r}
+enterprise23 <- enterprise23 %>%
+  mutate(inspection_travail = case_when(
+    l40 == -9 ~ "NA_inspection_travail",
+    l40 == 1 ~ "Inspection du travail",
+    l40 == 2 ~ "Aucune inspection",
+    TRUE ~ NA_character_
+  ))
+
+table(enterprise23$inspection_travail, useNA = "always")
+freq(enterprise23$inspection_travail)
+
+```
+
+# 6. Reconnaissance et légitimité organisationnelle
+
+## 6.1 Statut juridique de l’entreprise (b1_PRY)
+```{r}
+enterprise23 <- enterprise23 %>%
+  mutate(statut_legal = case_when(
+    b1_PRY == -9 ~ "NA_statut_legal",
+    b1_PRY %in% c(1, 2) ~ "SA",                            # Société anonyme cotée ou non cotée
+    b1_PRY == 3 ~ "Unipersonnelle",                       # Entreprise individuelle
+    b1_PRY %in% c(4, 5, 6, 7) ~ "SARL et sociétés similaires",  # Formes collectives intermédiaires
+    TRUE ~ NA_character_
+  ))
+
+table(enterprise23$statut_legal, useNA = "always")
+freq(enterprise23$statut_legal)
+```
+
+## 6.2 Année de création (b5)
+```{r}
+enterprise23 <- enterprise23 %>%
+  mutate(annee_creation = case_when(
+    b5 == -9 ~ "NA_annee_creation",
+    b5 < 1972 ~ "Historiques (avant 1972)",
+    b5 >= 1972 & b5 < 1990 ~ "Matures (1972–1989)",
+    b5 >= 1990 & b5 < 2018 ~ "Néolibérales (1990–2017)",
+    b5 >= 2018 ~ "Récentes (2018 ou plus)",
+    TRUE ~ NA_character_
+  ))
+
+table(enterprise23$annee_creation, useNA = "always")
+freq(enterprise23$annee_creation)
+
+```
+
+## 6.3 Expérience du gérant / top manager (b7)
+```{r}
+enterprise23 <- enterprise23 %>%
+  mutate(exp_gerant = case_when(
+    b7 == -9 ~ "NA_exp_gerant",
+    b7 <= 5 ~ "Gérant débutant (≤ 5 ans)",
+    b7 > 5 & b7 <= 20 ~ "Gérant expérimenté (6–20 ans)",
+    b7 > 20 & b7 <= 40 ~ "Gérant très expérimenté (21–40 ans)",
+    b7 > 40 ~ "Gérant vétéran (41 ans ou plus)",
+    TRUE ~ NA_character_
+  ))
+
+table(enterprise23$exp_gerant, useNA = "always")
+freq(enterprise23$exp_gerant)
+```
+
+## 6.4 Certification de qualité (b8)
+```{r}
+enterprise23 <- enterprise23 %>%
+  mutate(certification_qualite = case_when(
+    b8 == -9 ~ "NA_certification",
+    b8 == 1 ~ "Certification obtenue",
+    b8 %in% c(2, -6) ~ "Aucune certification",
+    TRUE ~ NA_character_
+  ))
+
+table(enterprise23$certification_qualite, useNA = "always")
+freq(enterprise23$certification_qualite)
+
+```
+
+## 6.5 Présence en ligne (c22b)
+```{r}
+enterprise23 <- enterprise23 %>%
+  mutate(presence_en_ligne = case_when(
+    c22b == 1 ~ "Présence en ligne",
+    c22b == 2 ~ "Aucune présence en ligne",
+    TRUE ~ NA_character_
+  ))
+
+table(enterprise23$presence_en_ligne, useNA = "always")
+freq(enterprise23$presence_en_ligne)
+
+```
+
+# 7. Innovation et transition écologique
+
+## 7.1 Introduction d’innovations de produits ou processus (h1)
+```{r}
+enterprise23 <- enterprise23 %>%
+  mutate(innovation = case_when(
+    h1 == 1 ~ "Innovation introduite",
+    h1 == 2 ~ "Aucune innovation",
+    TRUE ~ NA_character_
+  ))
+
+table(enterprise23$innovation, useNA = "always")
+```
+
+## 7.2 Investissement en Recherche et Développement (h8)
+```{r}
+enterprise23 <- enterprise23 %>%
+  mutate(investissement_rd = case_when(
+    h8 == 1 ~ "Investissement en R&D",
+    h8 == 2 ~ "Aucun investissement en R&D",
+    TRUE ~ NA_character_
+  ))
+
+table(enterprise23$investissement_rd, useNA = "always")
+freq(enterprise23$investissement_rd)
+```
+
+## 7.3 Pratiques de réduction des émissions / déchets / pollution (ge8d)
+```{r}
+enterprise23 <- enterprise23 %>%
+  mutate(gestion_energie = case_when(
+    ge8d == -9 ~ "NA_gestion_energie",
+    ge8d == 1 ~ "Réduction des émissions (oui)",
+    ge8d == 2 ~ "Réduction des émissions (non)",
+    TRUE ~ NA_character_
+  ))
+
+table(enterprise23$gestion_energie, useNA = "always")
+freq(enterprise23$gestion_energie)
+
+```
+
+# 8. Variables supplémentaires
+
+## 8.1 Secteur d’activité principal (d1a1a)
+```{r}
+enterprise23 <- enterprise23 %>%
+  mutate(secteur_activite = case_when(
+    d1a1a == 1 ~ "Industrie manufacturière",
+    d1a1a %in% c(2, 3) ~ "Commerce (détail et gros)",
+    d1a1a %in% c(4, 6) ~ "Construction et services",
+    d1a1a %in% c(51, 52) ~ "Hôtellerie et restauration",
+    TRUE ~ NA_character_
+  ))
+
+table(enterprise23$secteur_activite, useNA = "always")
+freq(enterprise23$secteur_activite)
+```
+
+## 8.2 Perception de la concurrence et du pouvoir sur les prix
+```{r}
+# Évolution de la concurrence (e32)
+enterprise23 <- enterprise23 %>%
+  mutate(evolution_concurrence = case_when(
+    e32 == -9 ~ "NA_evolution_concurrence",
+    e32 == 1 ~ "Concurrence accrue",
+    e32 == 2 ~ "Concurrence réduite",
+    e32 == 3 ~ "Concurrence stable",
+    TRUE ~ NA_character_
+  ))
+
+freq(enterprise23$evolution_concurrence)
+
+# Pouvoir de fixation des prix (e33)
+enterprise23 <- enterprise23 %>%
+  mutate(pouvoir_prix = case_when(
+    e33 == -9 ~ "NA_pouvoir_prix",
+    e33 == 1 ~ "Pouvoir de fixation des prix",
+    e33 %in% c(2, -6, -7) ~ "Concurrence sur les prix",
+    TRUE ~ NA_character_
+  ))
+
+freq(enterprise23$pouvoir_prix)
+
+```
+
+## 8.3 Obstacles structurels (infrastructures, fiscalité, travail, ressources)
+```{r}
+# Format commun pour tous les obstacles : obstacle faible / modéré / sévère / NA
+recoder_obstacle <- function(var, na_values, prefix) {
+  case_when(
+    var %in% na_values ~ paste0("NA_", prefix),
+    var %in% c(0, 1) ~ paste0(prefix, " : obstacle faible"),
+    var == 2 ~ paste0(prefix, " : obstacle modéré"),
+    var %in% c(3, 4) ~ paste0(prefix, " : obstacle sévère"),
+    TRUE ~ NA_character_
+  )
+}
+
+# Électricité
+enterprise23 <- enterprise23 %>%
+  mutate(elec_obs = recoder_obstacle(c30a, c(-7, 0), "Électricité"))
+
+# Transport
+enterprise23 <- enterprise23 %>%
+  mutate(trans_obs = recoder_obstacle(d30a, c(-7, 0), "Transport"))
+
+# Réglementation douanière
+enterprise23 <- enterprise23 %>%
+  mutate(aduan_obs = recoder_obstacle(d30b, c(-7, 0), "Réglementation"))
+
+# Concurrence informelle
+enterprise23 <- enterprise23 %>%
+  mutate(obstacle_concurrence_informelle = case_when(
+    e30 %in% c(-9, -7) ~ "NA_obstacle_informel",
+    e30 == 0 ~ "Informel : aucun obstacle",
+    e30 %in% c(1, 2) ~ "Informel : obstacle modéré",
+    e30 %in% c(3, 4) ~ "Informel : obstacle sévère",
+    TRUE ~ NA_character_
+  ))
+
+# Accès à la terre
+enterprise23 <- enterprise23 %>%
+  mutate(obstacle_terre = case_when(
+    g30a %in% c(-9, -7) ~ "NA_obstacle_terre",
+    g30a == 0 ~ "Terre : aucun obstacle",
+    g30a %in% c(1, 2) ~ "Terre : obstacle modéré",
+    g30a %in% c(3, 4) ~ "Terre : obstacle sévère",
+    TRUE ~ NA_character_
+  ))
+
+# Accès au financement
+enterprise23 <- enterprise23 %>%
+  mutate(obstacle_financement = case_when(
+    k30 == 0 ~ "Financement : aucun obstacle",
+    k30 %in% c(1, 2) ~ "Financement : obstacle modéré",
+    k30 %in% c(3, 4) ~ "Financement : obstacle sévère",
+    TRUE ~ NA_character_
+  ))
+
+# Fiscalité : impôts
+enterprise23 <- enterprise23 %>%
+  mutate(obstacle_taxes = case_when(
+    j30a %in% c(-9, -7) ~ "NA_obstacle_taxes",
+    j30a == 0 ~ "Taxes : aucun obstacle",
+    j30a %in% c(1, 2) ~ "Taxes : obstacle modéré",
+    j30a %in% c(3, 4) ~ "Taxes : obstacle sévère",
+    TRUE ~ NA_character_
+  ))
+
+# Fiscalité : administration
+enterprise23 <- enterprise23 %>%
+  mutate(obstacle_admin_fiscale = case_when(
+    j30b %in% c(-9, -7) ~ "NA_obstacle_admin_fiscale",
+    j30b == 0 ~ "Admin. fiscale : aucun obstacle",
+    j30b %in% c(1, 2) ~ "Admin. fiscale : obstacle modéré",
+    j30b %in% c(3, 4) ~ "Admin. fiscale : obstacle sévère",
+    TRUE ~ NA_character_
+  ))
+
+# Licences
+enterprise23 <- enterprise23 %>%
+  mutate(obstacle_licences = case_when(
+    j30c %in% c(-9, -7) ~ "NA_obstacle_licences",
+    j30c == 0 ~ "Licences : aucun obstacle",
+    j30c %in% c(1, 2) ~ "Licences : obstacle modéré",
+    j30c %in% c(3, 4) ~ "Licences : obstacle sévère",
+    TRUE ~ NA_character_
+  ))
+
+# Inatabilité politique
+enterprise23 <- enterprise23 %>%
+  mutate(obstacle_politique = case_when(
+    j30e %in% c(-9, -7) ~ "NA_obstacle_politique",
+    j30e == 0 ~ "Politique : aucun obstacle",
+    j30e %in% c(1, 2) ~ "Politique : obstacle modéré",
+    j30e %in% c(3, 4) ~ "Politique : obstacle sévère",
+    TRUE ~ NA_character_
+  ))
+
+# Corruption
+enterprise23 <- enterprise23 %>%
+  mutate(obstacle_corruption = case_when(
+    j30f %in% c(-9, -7) ~ "NA_obstacle_corruption",
+    j30f == 0 ~ "Corruption : aucun obstacle",
+    j30f %in% c(1, 2) ~ "Corruption : obstacle modéré",
+    j30f %in% c(3, 4) ~ "Corruption : obstacle sévère",
+    TRUE ~ NA_character_
+  ))
+
+# Réglementation du travail
+enterprise23 <- enterprise23 %>%
+  mutate(obstacle_reglementation_travail = case_when(
+    l30a %in% c(-9, -7) ~ "NA_obstacle_travail",
+    l30a == 0 ~ "Travail : aucun obstacle",
+    l30a %in% c(1, 2) ~ "Travail : obstacle modéré",
+    l30a %in% c(3, 4) ~ "Travail : obstacle sévère",
+    TRUE ~ NA_character_
+  ))
+
+# Main-d’œuvre peu qualifiée
+enterprise23 <- enterprise23 %>%
+  mutate(obstacle_main_oeuvre = case_when(
+    l30b %in% c(-9, -7) ~ "NA_obstacle_main_oeuvre",
+    l30b == 0 ~ "Main-d’œuvre : aucun obstacle",
+    l30b %in% c(1, 2) ~ "Main-d’œuvre : obstacle modéré",
+    l30b %in% c(3, 4) ~ "Main-d’œuvre : obstacle sévère",
+    TRUE ~ NA_character_
+  ))
+
+```
+
+## 8.4 Institutions et justice
+```{r}
+# Indépendance perçue des tribunaux (j31)
+enterprise23 <- enterprise23 %>%
+  mutate(indep_tribunaux = case_when(
+    j31 %in% c(-9, -7) ~ "NA_indep_tribunaux",
+    j31 %in% c(1, 2) ~ "Tribunaux non indépendants",
+    j31 %in% c(3, 4) ~ "Tribunaux indépendants",
+    TRUE ~ NA_character_
+  ))
+
+freq(enterprise23$indep_tribunaux)
+
+# Participation aux marchés publics (j6a)
+enterprise23 <- enterprise23 %>%
+  mutate(participation_marches_publics = case_when(
+    j6a == -9 ~ "NA_marches_publics",
+    j6a == 1 ~ "Marchés publics : participation",
+    j6a == 2 ~ "Marchés publics : aucune participation",
+    TRUE ~ NA_character_
+  ))
+
+freq(enterprise23$participation_marches_publics)
+
+```
+
+# 9. Facteurs structurants (hypothèses)
+
+## 9.1 Exportation (d3c)
+```{r}
+enterprise23 <- enterprise23 %>%
+  mutate(exportation = case_when(
+    d3c == 0 ~ "Non exportatrice",
+    d3c > 0 ~ "Exportatrice",
+    TRUE ~ NA_character_
+  ))
+
+table(enterprise23$exportation, useNA = "always")
+freq(enterprise23$exportation)
+```
+
+## 9.2 Contrats publics (j42)
+```{r}
+enterprise23 <- enterprise23 %>%
+  mutate(contrat_etat = case_when(
+    j42 == 1 ~ "Contrat avec l'État",
+    j42 == 2 ~ "Aucun contrat avec l'État",
+    TRUE ~ NA_character_
+  ))
+
+table(enterprise23$contrat_etat, useNA = "always")
+freq(enterprise23$contrat_etat)
+
+```
+
+## 9.3 Présence de capital étranger (b2b)
+```{r}
+enterprise23 <- enterprise23 %>%
+  mutate(capital_etranger = case_when(
+    b2b > 0 ~ "Avec capital étranger",
+    b2b == 0 ~ "Sans capital étranger",
+    b2b == -9 ~ "NA_capital_etranger"
+  ))
+
+freq(enterprise23$capital_etranger)
+
+```
+# Fin de la phase de recodification. Le fichier est prêt pour l'analyse géométrique des données (ACM / CAH).
+
